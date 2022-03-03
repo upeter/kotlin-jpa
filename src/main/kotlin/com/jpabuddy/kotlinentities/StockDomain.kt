@@ -33,7 +33,6 @@ data class Stock(
     val symbol: String,
     val price: Double,
 )
-    //:BaseEntity()
 {
 }
 
@@ -43,7 +42,6 @@ data class User(
     @field: javax.persistence.Id @field: GeneratedValue(strategy = GenerationType.IDENTITY)
      val id: Long = NO_ID,
     val email: String,)
-    //:BaseEntity()
 
 @Entity
 data class Portfolio(
@@ -58,12 +56,7 @@ data class Portfolio(
     @JoinColumn(name = "user_id", nullable = false)
     val user: User
 
-)
-    //:BaseEntity()
-{
-//    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-//    @JoinColumn(name = "user_id", nullable = false)
-//    lateinit var user: User
+){
 
     companion object {
 //        operator fun invoke(stocks:List<Stock>, user:User) = Portfolio(stocks = stocks.toMutableList()).apply {
