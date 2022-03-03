@@ -1,0 +1,175 @@
+package com.jpabuddy.kotlinentities
+
+import com.jpabuddy.kotlinentities.BaseEntity.Companion.NO_ID
+import com.jpabuddy.kotlinentities.SampleData.amznStock
+import com.jpabuddy.kotlinentities.SampleData.googStock
+import com.jpabuddy.kotlinentities.SampleData.userJack
+import com.jpabuddy.kotlinentities.SampleData.userJoe
+import io.kotlintest.matchers.beInstanceOf
+import io.kotlintest.matchers.collections.contain
+import io.kotlintest.should
+import io.kotlintest.shouldBe
+import io.kotlintest.shouldNotBe
+import org.hibernate.proxy.HibernateProxy
+import org.junit.jupiter.api.Test
+import org.junit.platform.commons.logging.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
+import org.springframework.data.repository.findByIdOrNull
+import org.springframework.test.context.ActiveProfiles
+import org.springframework.test.context.transaction.TestTransaction
+import java.util.*
+
+object SampleData {
+    val googStock = Stock(symbol = "GOOG", price = 1.2)
+    val amznStock = Stock(symbol = "AMZN", price = 1.2)
+    val userJoe = User(email = "joe@trader.com")
+    val userJack = User(email = "jack@trader.com")
+}
+
+@DataJpaTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@ActiveProfiles("default","test")
+class PortfolioRepositoryTest @Autowired constructor(
+    val portfolioRepository: BlockingPortfolioRepository,
+    val userRepository: BlockingUserRepository,
+    val stockRepository: BlockingStockRepository
+) {
+
+    companion object {
+        private val LOGGER = LoggerFactory.getLogger(PortfolioRepositoryTest::class.java)
+    }
+
+
+    fun doWithPortfolio(doWith:(Portfolio) -> Unit) {
+        TestTransaction.flagForCommit()
+        val stocks = listOf(googStock, amznStock).let(stockRepository::saveAll)
+        val (joe, jack) = listOf(userJoe, userJack).let(userRepository::saveAll)
+        //Portfolio(stocks = stocks, user = joe)
+        val portfolios = listOf(Portfolio(stocks = stocks, user = jack)).let(portfolioRepository::saveAll)
+        TestTransaction.end()
+        TestTransaction.start()
+        try {
+            doWith(portfolios.first())
+        } finally {
+            portfolioRepository.deleteAll()
+        }
+    }
+
+    fun doWithUsers(doWith:(List<User>) -> Unit) {
+        TestTransaction.flagForCommit()
+        val users = listOf(userJoe, userJack).let(userRepository::saveAll)
+        //Portfolio(stocks = stocks, user = joe)
+        TestTransaction.end()
+        TestTransaction.start()
+        try {
+            doWith(users)
+        } finally {
+            portfolioRepository.deleteAll()
+        }
+    }
+
+    @Test
+    fun `portfolio is initialized`() {
+        doWithPortfolio {
+            val project = portfolioRepository.findByIdOrNull(it.id)
+            project shouldNotBe null
+        }
+    }
+
+    @Test
+    fun `should mutate user`() {
+        doWithUsers {
+            val user = userRepository.findByIdOrNull(it.first().id)!!
+            val newEmail = UUID.randomUUID().toString()
+
+            userRepository.save(user.copy(email = newEmail))
+
+            val userChanged = userRepository.findByEmail(newEmail)
+            userChanged?.email shouldBe newEmail
+        }
+    }
+
+    /**
+     * Hibernate cannot create proxies for final classes, which is the default for all classes in Kotlin.
+     * This can lead to performance issues, as all the LAZY toOne associations effectively become EAGER.
+     *
+     * This test makes sure that the 'user' field of 'Portfolio' is initialized with a proxy.
+     */
+    @Test
+    fun `should have lazy loading enabled`() {
+        doWithPortfolio {
+            val portfolio = portfolioRepository.findByIdOrNull(1)
+            val user = portfolio?.user ?: throw IllegalArgumentException("not found")
+            LOGGER.info { "Class used for the client reference: ${user::class.java}" }
+            user should beInstanceOf<HibernateProxy>()
+            println(user.email)
+        }
+    }
+
+
+    /**
+     * The default equals() implementation for data classes
+     * includes all the properties from the primary constructor.
+     * Such implementation can load LAZY fields, which leads to:
+     * 1. Performance issues.
+     * 2. LazyInitializationException if called outside a transaction.
+     * 3. StackOverflowError when comparing two objects with circular dependencies.
+     *
+     * As a result of this test exactly one Hibernate request should be printed in the logs.
+     */
+    @Test
+    fun `equality issue`() {
+        doWithPortfolio {
+            val portfolio = portfolioRepository.findByIdOrNull(it.id)
+            portfolio shouldBe portfolio?.copy()
+        }
+    }
+
+
+    /**
+     * hashCode should not depend on any mutable properties, including the id generated by the DB.
+     * If Portfolio was a data-class without overridden equals() and hashCode(), this test would fail.
+     */
+    @Test
+    fun `hashcode should be consistent`() {
+        doWithUsers {
+            val user1 = it.first()
+            val user2 = it.last()
+            val awesomePortfolio1 = Portfolio(user = user1)
+            val awesomePortfolio2 = Portfolio(user =user2)
+           ( awesomePortfolio1.id == NO_ID ) shouldBe  (awesomePortfolio2.id == NO_ID)
+
+            val hashSet = hashSetOf(awesomePortfolio1, awesomePortfolio2)
+            LOGGER.info { awesomePortfolio1.hashCode().toString() }
+
+            portfolioRepository.save(awesomePortfolio1)
+            LOGGER.info { awesomePortfolio1.hashCode().toString() }
+
+            portfolioRepository.save(awesomePortfolio2)
+            LOGGER.info { awesomePortfolio2.hashCode().toString() }
+
+            awesomePortfolio1.id shouldNotBe awesomePortfolio2.id
+
+            hashSet shouldBe contain(awesomePortfolio1)
+            hashSet shouldBe contain(awesomePortfolio2)
+            hashSet.size shouldBe 2
+        }
+    }
+
+    @Test
+    fun valForIdTest() {
+        val user = User(email = "New client")
+        (user.id == NO_ID) shouldBe true
+        userRepository.save(user)
+        (user.id == NO_ID) shouldBe false
+    }
+
+    @Test
+    fun lateInitWorks() {
+        val project = Portfolio(user = User(email = "The Best Client"))
+        project.user.email shouldNotBe null
+    }
+
+}

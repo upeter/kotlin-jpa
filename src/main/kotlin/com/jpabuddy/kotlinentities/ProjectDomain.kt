@@ -1,8 +1,10 @@
 package com.jpabuddy.kotlinentities
 
+import com.jpabuddy.kotlinentities.BaseEntity.Companion.NO_ID
 import org.hibernate.Hibernate
 import org.hibernate.annotations.NaturalId
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.stereotype.Repository
 import javax.persistence.*
 
 
@@ -122,7 +124,7 @@ data class Contact(
 
         return email == other.email
     }
-    
+
     override fun hashCode(): Int = email.hashCode()
 
     @Override
